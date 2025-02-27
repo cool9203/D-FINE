@@ -2,17 +2,17 @@ task: detection
 
 evaluator:
   type: CocoEvaluator
-  iou_types: ['bbox', ]
+  iou_types: ["bbox"]
 
-num_classes: 777 # your dataset classes
+num_classes: 45 # your dataset classes
 remap_mscoco_category: False
 
 train_dataloader:
   type: DataLoader
   dataset:
     type: CocoDetection
-    img_folder: /data/yourdataset/train
-    ann_file: /data/yourdataset/train/train.json
+    img_folder: ./data/custom/images
+    ann_file: ./data/custom/annotations/auto_generate_44x500.json
     return_masks: False
     transforms:
       type: Compose
@@ -23,13 +23,12 @@ train_dataloader:
   collate_fn:
     type: BatchImageCollateFunction
 
-
 val_dataloader:
   type: DataLoader
   dataset:
     type: CocoDetection
-    img_folder: /data/yourdataset/val
-    ann_file: /data/yourdataset/val/val.json
+    img_folder: ./data/custom/images
+    ann_file: ./data/custom/annotations/auto_generate_44x10.json
     return_masks: False
     transforms:
       type: Compose
