@@ -46,6 +46,8 @@ def convert_steel_to_coco(
     copy_image: bool = False,
     **kwds,
 ):
+    Path(image_output_path).mkdir(exist_ok=True)
+    Path(output_path).parent.mkdir(exist_ok=True)
     images = list()
     annotations = list()
     categories = list()
