@@ -64,7 +64,7 @@ def convert_steel_to_coco(
         categories.append(
             {
                 "id": len(categories),
-                "name": folder_path.stem,
+                "name": folder_path.name,
             }
         )
 
