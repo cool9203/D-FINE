@@ -202,6 +202,43 @@ def load_model(
     return model
 
 
+def draw_bbox_and_label(
+    image: Image.Image,
+    xyxy: np.ndarray,
+    confidence: np.ndarray,
+    class_id: np.ndarray,
+    threshold: float = None,
+) -> tuple[Image.Image, sv.Detections]:
+    detections = sv.Detections(
+        xyxy=xyxy,
+        confidence=confidence,
+        class_id=class_id,
+    )
+    detections = (
+        detections
+        if threshold is None
+        else detections[detections.confidence > threshold]
+    )
+
+    text_scale = sv.calculate_optimal_text_scale(resolution_wh=image.size)
+    line_thickness = sv.calculate_optimal_line_thickness(resolution_wh=image.size)
+
+    box_annotator = sv.BoxAnnotator(thickness=line_thickness)
+    label_annotator = sv.LabelAnnotator(text_scale=text_scale, smart_position=True)
+
+    label_texts = [
+        f"{_id2name[class_id]} {confidence:.2f}"
+        for class_id, confidence in zip(detections.class_id, detections.confidence)
+    ]
+
+    image = box_annotator.annotate(scene=image, detections=detections)
+    image = label_annotator.annotate(
+        scene=image, detections=detections, labels=label_texts
+    )
+
+    return (image, detections)
+
+
 @app.post("/api/detect_steel")
 def detect_steel_api(
     image: Annotated[UploadFile, File()],
@@ -219,16 +256,26 @@ def detect_steel(
     image: Image.Image,
     threshold: float,
 ):
-    resized_image = image_resize(src=image, size=(1280, 1280))
     response = _detect_steel(
-        image=resized_image,
+        image=image,
         threshold=threshold,
     )
-    image_base64 = response.image
-    image_type = image_base64.split(";")[0].split(":")[1]  # noqa: F841
-    image_base64 = image_base64.split(";")[1].split(",")[1]
+    resized_image = image_resize(src=image, size=(1280, 1280))
+    scale = resized_image.size[0] / image.size[0]
+    (resized_image, detections) = draw_bbox_and_label(
+        image=resized_image,
+        xyxy=np.array(
+            [
+                [position * scale for position in result["bbox"]]
+                for result in response.results
+            ]
+        ),
+        confidence=np.array([result["confidence"] for result in response.results]),
+        class_id=np.array([result["id"] for result in response.results]).astype(int),
+    )
+
     return (
-        Image.open(io.BytesIO(base64.b64decode(image_base64.encode("utf-8")))),
+        resized_image,
         response.used_time,
     )
 
@@ -266,31 +313,12 @@ def _detect_steel(
     (labels, boxes, scores) = output
     (label, box, score) = (labels[0], boxes[0], scores[0])
 
-    detections = sv.Detections(
+    (image, detections) = draw_bbox_and_label(
+        image=image,
         xyxy=box.detach().cpu().numpy(),
         confidence=score.detach().cpu().numpy(),
         class_id=label.detach().cpu().numpy().astype(int),
-    )
-    detections = (
-        detections
-        if threshold is None
-        else detections[detections.confidence > threshold]
-    )
-
-    text_scale = sv.calculate_optimal_text_scale(resolution_wh=image.size)
-    line_thickness = sv.calculate_optimal_line_thickness(resolution_wh=image.size)
-
-    box_annotator = sv.BoxAnnotator(thickness=line_thickness)
-    label_annotator = sv.LabelAnnotator(text_scale=text_scale, smart_position=True)
-
-    label_texts = [
-        f"{_id2name[class_id]} {confidence:.2f}"
-        for class_id, confidence in zip(detections.class_id, detections.confidence)
-    ]
-
-    image = box_annotator.annotate(scene=image, detections=detections)
-    image = label_annotator.annotate(
-        scene=image, detections=detections, labels=label_texts
+        threshold=threshold,
     )
 
     results = list()
