@@ -219,8 +219,9 @@ def detect_steel(
     image: Image.Image,
     threshold: float,
 ):
+    resized_image = image_resize(src=image, size=(1280, 1280))
     response = _detect_steel(
-        image=image,
+        image=resized_image,
         threshold=threshold,
     )
     image_base64 = response.image
@@ -247,9 +248,7 @@ def _detect_steel(
 
     (model, device) = (__model["model"], __model["device"])
 
-    resized_image = image_resize(src=image, size=(1280, 1280))
-
-    w, h = resized_image.size
+    w, h = image.size
     orig_size = torch.tensor([[w, h]]).to(device)
 
     transforms = T.Compose(
@@ -278,10 +277,8 @@ def _detect_steel(
         else detections[detections.confidence > threshold]
     )
 
-    text_scale = sv.calculate_optimal_text_scale(resolution_wh=resized_image.size)
-    line_thickness = sv.calculate_optimal_line_thickness(
-        resolution_wh=resized_image.size
-    )
+    text_scale = sv.calculate_optimal_text_scale(resolution_wh=image.size)
+    line_thickness = sv.calculate_optimal_line_thickness(resolution_wh=image.size)
 
     box_annotator = sv.BoxAnnotator(thickness=line_thickness)
     label_annotator = sv.LabelAnnotator(text_scale=text_scale, smart_position=True)
@@ -291,9 +288,9 @@ def _detect_steel(
         for class_id, confidence in zip(detections.class_id, detections.confidence)
     ]
 
-    resized_image = box_annotator.annotate(scene=resized_image, detections=detections)
-    resized_image = label_annotator.annotate(
-        scene=resized_image, detections=detections, labels=label_texts
+    image = box_annotator.annotate(scene=image, detections=detections)
+    image = label_annotator.annotate(
+        scene=image, detections=detections, labels=label_texts
     )
 
     results = list()
@@ -312,7 +309,7 @@ def _detect_steel(
         )
 
     with io.BytesIO() as img_io:
-        resized_image.save(img_io, format=img_type)
+        image.save(img_io, format=img_type)
         img_b64_str = base64.b64encode(img_io.getvalue()).decode("utf-8")
 
         return DetectSteelResponse(
