@@ -7,12 +7,16 @@ import time
 from pathlib import Path
 from typing import Annotated
 
+import cv2
 import gradio as gr
+import numpy as np
+import supervision as sv
 import torch
 import torch.nn
 import torchvision.transforms as T
+from cv2.typing import MatLike
 from fastapi import FastAPI, File, Form, UploadFile
-from PIL import Image, ImageDraw
+from PIL import Image
 from pydantic import BaseModel, ConfigDict
 
 from src.core import YAMLConfig
@@ -108,6 +112,58 @@ class DetectSteelResponse(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
+def get_image(
+    src: Image.Image,
+) -> MatLike:
+    # Instantiation of document, either an image or a PDF
+    if isinstance(src, np.ndarray):
+        img = src
+    elif isinstance(src, Image.Image):
+        img = np.asarray(
+            src
+        ).astype(
+            np.uint8
+        )  # Reference: https://github.com/opencv/opencv/issues/24522#issuecomment-1972141659
+    else:
+        if isinstance(src, bytes):
+            _src = src
+        elif isinstance(src, io.BytesIO):
+            src.seek(0)
+            _src = src.read()
+        elif isinstance(src, (str, Path)):
+            with io.open(str(src), "rb") as f:
+                _src = f.read()
+        else:
+            raise TypeError(f"Not implement image type: {type(src)}")
+        img = cv2.imdecode(np.frombuffer(_src, np.uint8), cv2.IMREAD_COLOR)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    return img
+
+
+def image_resize(
+    src: Image.Image,
+    size: tuple[int, int] = None,
+    scale: float = None,
+) -> Image.Image:
+    # interpolation reference: https://stackoverflow.com/questions/23853632/which-kind-of-interpolation-best-for-resizing-image
+    if size:
+        image = get_image(src=src)
+        scale = (
+            scale if scale else min(size[0] / image.shape[0], size[1] / image.shape[1])
+        )
+        interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+        image = cv2.resize(
+            src=image,
+            dsize=(
+                int(image.shape[1] * scale),
+                int(image.shape[0] * scale),
+            ),
+            interpolation=interpolation,
+        )
+        src = Image.fromarray(image)
+    return src
+
+
 def load_model(
     config: str,
     model_name: str = None,
@@ -191,7 +247,9 @@ def _detect_steel(
 
     (model, device) = (__model["model"], __model["device"])
 
-    w, h = image.size
+    resized_image = image_resize(src=image, size=(1280, 1280))
+
+    w, h = resized_image.size
     orig_size = torch.tensor([[w, h]]).to(device)
 
     transforms = T.Compose(
@@ -207,33 +265,54 @@ def _detect_steel(
     end_time = time.time()
 
     (labels, boxes, scores) = output
-
-    draw = ImageDraw.Draw(image)
     (label, box, score) = (labels[0], boxes[0], scores[0])
 
-    lab = label[score > threshold]
-    box = box[score > threshold]
-    scrs = score[score > threshold]
+    detections = sv.Detections(
+        xyxy=box.detach().cpu().numpy(),
+        confidence=score.detach().cpu().numpy(),
+        class_id=label.detach().cpu().numpy().astype(int),
+    )
+    detections = (
+        detections
+        if threshold is None
+        else detections[detections.confidence > threshold]
+    )
+
+    text_scale = sv.calculate_optimal_text_scale(resolution_wh=resized_image.size)
+    line_thickness = sv.calculate_optimal_line_thickness(
+        resolution_wh=resized_image.size
+    )
+
+    box_annotator = sv.BoxAnnotator(thickness=line_thickness)
+    label_annotator = sv.LabelAnnotator(text_scale=text_scale, smart_position=True)
+
+    label_texts = [
+        f"{_id2name[class_id]} {confidence:.2f}"
+        for class_id, confidence in zip(detections.class_id, detections.confidence)
+    ]
+
+    resized_image = box_annotator.annotate(scene=resized_image, detections=detections)
+    resized_image = label_annotator.annotate(
+        scene=resized_image, detections=detections, labels=label_texts
+    )
 
     results = list()
-    for j, b in enumerate(box):
-        draw.rectangle(list(b), outline="red")
-        draw.text(
-            (b[0], b[1]),
-            text=f"{_id2name[lab[j].item()]} {round(scrs[j].item(), 2)}",
-            fill="blue",
-        )
+    for class_id, confidence, bbox in zip(
+        detections.class_id,
+        detections.confidence,
+        detections.xyxy,
+    ):
         results.append(
             {
-                "bbox": b.tolist(),
-                "id": lab[j].item(),
-                "name": _id2name[lab[j].item()],
-                "confidence": round(scrs[j].item(), 2),
+                "bbox": bbox,
+                "id": class_id,
+                "name": _id2name[class_id],
+                "confidence": confidence,
             }
         )
 
     with io.BytesIO() as img_io:
-        image.save(img_io, format=img_type)
+        resized_image.save(img_io, format=img_type)
         img_b64_str = base64.b64encode(img_io.getvalue()).decode("utf-8")
 
         return DetectSteelResponse(

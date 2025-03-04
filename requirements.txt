@@ -8,3 +8,4 @@ calflops
 transformers
 fastapi
 gradio
+supervision
