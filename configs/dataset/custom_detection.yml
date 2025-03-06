@@ -12,7 +12,7 @@ train_dataloader:
   dataset:
     type: CocoDetection
     img_folder: ./data/custom/images
-    ann_file: ./data/custom/annotations/auto_generate_44x500.json
+    ann_file: ./data/custom/annotations/train.json
     return_masks: False
     transforms:
       type: Compose
@@ -28,7 +28,7 @@ val_dataloader:
   dataset:
     type: CocoDetection
     img_folder: ./data/custom/images
-    ann_file: ./data/custom/annotations/auto_generate_44x10.json
+    ann_file: ./data/custom/annotations/val.json
     return_masks: False
     transforms:
       type: Compose
