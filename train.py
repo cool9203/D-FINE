@@ -8,6 +8,7 @@ Copyright (c) 2023 lyuwenyu. All Rights Reserved.
 
 import os
 import sys
+import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -16,12 +17,11 @@ import argparse
 from src.core import YAMLConfig, yaml_utils
 from src.misc import dist_utils
 from src.solver import TASKS
+from pprint import pprint
 
 debug = False
 
 if debug:
-    import torch
-
     def custom_repr(self):
         return f"{{Tensor:{tuple(self.shape)}}} {original_repr(self)}"
 
@@ -29,9 +29,14 @@ if debug:
     torch.Tensor.__repr__ = custom_repr
 
 
-def main(
-    args,
-) -> None:
+def safe_get_rank():
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        return torch.distributed.get_rank()
+    else:
+        return 0
+
+
+def main(args) -> None:
     """main"""
     dist_utils.setup_distributed(args.print_rank, args.print_method, seed=args.seed)
 
@@ -58,7 +63,9 @@ def main(
         if "HGNetv2" in cfg.yaml_cfg:
             cfg.yaml_cfg["HGNetv2"]["pretrained"] = False
 
-    print("cfg: ", cfg.__dict__)
+    if safe_get_rank() == 0:
+        print("cfg: ")
+        pprint(cfg.__dict__)
 
     solver = TASKS[cfg.yaml_cfg["task"]](cfg)
 

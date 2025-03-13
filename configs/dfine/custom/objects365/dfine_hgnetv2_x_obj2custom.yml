@@ -41,7 +41,7 @@ optimizer:
   betas: [0.9, 0.999]
   weight_decay: 0.0001
 
-epoches: 500 # Early stop
+epochs: 500 # Early stop
 train_dataloader:
   dataset:
     transforms:

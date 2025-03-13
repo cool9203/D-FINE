@@ -9,3 +9,4 @@ transformers
 fastapi
 gradio
 supervision
+loguru

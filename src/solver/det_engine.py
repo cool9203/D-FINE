@@ -8,16 +8,19 @@ Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 
 import math
 import sys
-from typing import Iterable
+from typing import Dict, Iterable, List
 
+import numpy as np
 import torch
 import torch.amp
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.utils.tensorboard import SummaryWriter
 
 from ..data import CocoEvaluator
+from ..data.dataset import mscoco_category2label
 from ..misc import MetricLogger, SmoothedValue, dist_utils
 from ..optim import ModelEMA, Warmup
+from .validator import Validator, scale_boxes
 
 
 def train_one_epoch(
@@ -27,9 +30,13 @@ def train_one_epoch(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     epoch: int,
+    use_wandb: bool,
     max_norm: float = 0,
     **kwargs,
 ):
+    if use_wandb:
+        import wandb
+
     model.train()
     criterion.train()
     metric_logger = MetricLogger(delimiter="  ")
@@ -42,12 +49,13 @@ def train_one_epoch(
     ema: ModelEMA = kwargs.get("ema", None)
     scaler: GradScaler = kwargs.get("scaler", None)
     lr_warmup_scheduler: Warmup = kwargs.get("lr_warmup_scheduler", None)
+    losses = []
 
     for i, (samples, targets) in enumerate(
         metric_logger.log_every(data_loader, print_freq, header)
     ):
         samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
         global_step = epoch * len(data_loader) + i
         metas = dict(epoch=epoch, step=i, global_step=global_step, epoch_step=len(data_loader))
 
@@ -103,6 +111,7 @@ def train_one_epoch(
 
         loss_dict_reduced = dist_utils.reduce_dict(loss_dict)
         loss_value = sum(loss_dict_reduced.values())
+        losses.append(loss_value.detach().cpu().numpy())
 
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
@@ -119,6 +128,10 @@ def train_one_epoch(
             for k, v in loss_dict_reduced.items():
                 writer.add_scalar(f"Loss/{k}", v.item(), global_step)
 
+    if use_wandb:
+        wandb.log(
+            {"lr": optimizer.param_groups[0]["lr"], "epoch": epoch, "train/loss": np.mean(losses)}
+        )
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
@@ -133,7 +146,12 @@ def evaluate(
     data_loader,
     coco_evaluator: CocoEvaluator,
     device,
+    epoch: int,
+    use_wandb: bool,
 ):
+    if use_wandb:
+        import wandb
+
     model.eval()
     criterion.eval()
     coco_evaluator.cleanup()
@@ -147,9 +165,12 @@ def evaluate(
     # coco_evaluator = CocoEvaluator(base_ds, iou_types)
     # coco_evaluator.coco_eval[iou_types[0]].params.iouThrs = [0, 0.1, 0.5, 0.75]
 
+    gt: List[Dict[str, torch.Tensor]] = []
+    preds: List[Dict[str, torch.Tensor]] = []
+
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
 
         outputs = model(samples)
         # with torch.autocast(device_type=str(device)):
@@ -168,6 +189,35 @@ def evaluate(
         res = {target["image_id"].item(): output for target, output in zip(targets, results)}
         if coco_evaluator is not None:
             coco_evaluator.update(res)
+
+        # validator format for metrics
+        for idx, (target, result) in enumerate(zip(targets, results)):
+            gt.append(
+                {
+                    "boxes": scale_boxes(  # from model input size to original img size
+                        target["boxes"],
+                        (target["orig_size"][1], target["orig_size"][0]),
+                        (samples[idx].shape[-1], samples[idx].shape[-2]),
+                    ),
+                    "labels": target["labels"],
+                }
+            )
+            labels = (
+                torch.tensor([mscoco_category2label[int(x.item())] for x in result["labels"].flatten()])
+                .to(result["labels"].device)
+                .reshape(result["labels"].shape)
+            ) if postprocessor.remap_mscoco_category else result["labels"]
+            preds.append(
+                {"boxes": result["boxes"], "labels": labels, "scores": result["scores"]}
+            )
+
+    # Conf matrix, F1, Precision, Recall, box IoU
+    metrics = Validator(gt, preds).compute_metrics()
+    print("Metrics:", metrics)
+    if use_wandb:
+        metrics = {f"metrics/{k}": v for k, v in metrics.items()}
+        metrics["epoch"] = epoch
+        wandb.log(metrics)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()

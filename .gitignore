@@ -177,3 +177,7 @@ wandb/
 swanlog/
 generated_predictions.jsonl
 data/
+weight/
+*.pyc
+*.pth
+*.onnx
