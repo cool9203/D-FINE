@@ -234,7 +234,9 @@ def evaluate(
     # stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     if coco_evaluator is not None:
         if "bbox" in iou_types:
-            stats["coco_eval_bbox"] = coco_evaluator.coco_eval["bbox"].stats.tolist()
+            stats["coco_eval_bbox"] = [metrics["f1"]] + coco_evaluator.coco_eval[
+                "bbox"
+            ].stats.tolist()
         if "segm" in iou_types:
             stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
 
