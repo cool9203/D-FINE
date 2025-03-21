@@ -213,6 +213,7 @@ def evaluate(
 
     # Conf matrix, F1, Precision, Recall, box IoU
     metrics = Validator(gt, preds).compute_metrics()
+    metrics_f1 = metrics["f1"]
     print("Metrics:", metrics)
     if use_wandb:
         metrics = {f"metrics/{k}": v for k, v in metrics.items()}
@@ -234,7 +235,7 @@ def evaluate(
     # stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     if coco_evaluator is not None:
         if "bbox" in iou_types:
-            stats["coco_eval_bbox"] = [metrics["f1"]] + coco_evaluator.coco_eval[
+            stats["coco_eval_bbox"] = [metrics_f1] + coco_evaluator.coco_eval[
                 "bbox"
             ].stats.tolist()
         if "segm" in iou_types:
