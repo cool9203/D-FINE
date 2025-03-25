@@ -88,8 +88,34 @@ def _detect_one_result(
 
     image = PILImage.open(image_path)
     image_draw = ImageDraw.Draw(im=image)
-    names = [result["name"] for result in response["results"]]
-    multi_steel = (len(response["results"]) - names.count("number")) > 1
+
+    # Clear steel repeat detect
+    clear_hight_iou_steel_results = list()
+    for i in range(len(response["results"])):
+        if response["results"][i]["name"] in ["number"]:
+            clear_hight_iou_steel_results.append(response["results"][i])
+            continue
+        repeat = False
+        for j in range(i + 1, len(response["results"])):
+            if (
+                response["results"][i]["name"] == response["results"][j]["name"]
+                and calc_iou(
+                    response["results"][i]["bbox"], response["results"][j]["bbox"]
+                )
+                >= 0.95
+            ):
+                repeat = True
+        if not repeat:
+            clear_hight_iou_steel_results.append(response["results"][i])
+    response["results"] = clear_hight_iou_steel_results
+
+    names = [
+        result["name"]
+        for result in response["results"]
+        if result["name"] not in ["number"]
+    ]
+    multi_steel = len(names) > 1
+
     for result in response["results"]:
         (x1, y1, x2, y2) = result["bbox"]
 
