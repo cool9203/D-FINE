@@ -181,3 +181,4 @@ weight/
 *.pyc
 *.pth
 *.onnx
+result/
