@@ -122,25 +122,17 @@ def _detect_one_result(
 
         if result["name"] in ["number"]:
             image_draw.rectangle(((x1, y1), (x2, y2)), outline=(255, 0, 0), width=2)
-            image_draw.text(
-                (x1, y1),
-                text=result["name"],
-                fill=(255, 0, 0),
-            )
-        elif not multi_steel:
+        elif not multi_steel and result["name"] in str(save_path):
             image_draw.rectangle(((x1, y1), (x2, y2)), outline=(0, 0, 255), width=2)
             image_draw.text(
                 (x1, y1),
                 text=result["name"],
                 fill=(255, 0, 0),
             )
-
-        if multi_steel:
+        else:
             image_draw.text(
                 (0, 0),
-                text=", ".join(
-                    list(set([name for name in names if name not in ["number"]]))
-                ),
+                text=", ".join(set(names)),
                 fill=(255, 0, 0),
             )
 
